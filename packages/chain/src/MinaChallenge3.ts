@@ -79,9 +79,7 @@ export class MinaChallenge3 extends RuntimeModule<MinaChallenge3Config> {
         const agentState = this.agentStates.get(message.agentID);
         assert(agentState.isSome, "Agent does not exist");
         assert(message.messageNumber.greaterThan(agentState.value.lastMessageNumber), "Message number is not greater than the last message number");
-        console.log("message:", message.messageText.toString());
-        console.log("message length:", message.messageText.length());
-        assert(Field(message.messageText.toFields.length).equals(Field(12)), "Message is too long");
+        assert(Field(message.messageText.toString().length).equals(Field(12)), "Message is not 12 characters long");
         assert(agentState.value.securityCode.packed.equals(message.securityCode.packed), "Security code does not match");
         return true;
     }
