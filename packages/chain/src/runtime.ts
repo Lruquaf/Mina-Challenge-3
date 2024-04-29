@@ -1,7 +1,7 @@
 import { Field, Mina, UInt64 } from "o1js";
 import { Balances } from "./balances";
 import { runtimeModule } from "@proto-kit/module";
-import { MinaChallenge3 } from "./MinaChallenge3";
+import { MinaChallenge4 } from "./MinaChallenge4";
 
 @runtimeModule()
 export class CustomBalances extends Balances {}
@@ -10,7 +10,7 @@ export default {
   modules: {
     Balances,
     CustomBalances,
-    MinaChallenge3
+    MinaChallenge4
   },
   config: {
     Balances: {
@@ -19,7 +19,7 @@ export default {
     CustomBalances: {
       totalSupply: UInt64.from(10_000),
     },
-    MinaChallenge3: {
+    MinaChallenge4: {
       messageMaxChars: Field(12),
     },
   },
