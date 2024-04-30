@@ -1,12 +1,12 @@
 import { NoConfig } from "@proto-kit/common";
 import {
     RuntimeModule,
-    runtimeModule,
     state,
     runtimeMethod,
+    runtimeModule,
 } from "@proto-kit/module";
 import { StateMap, assert } from "@proto-kit/protocol";
-import { CircuitString, Field, Struct, Experimental, Provable, Character } from "o1js";
+import { CircuitString, Field, Struct, Experimental, Provable, Character, PublicKey, UInt64, Poseidon } from "o1js";
 import { PackedStringFactory } from "o1js-pack";
 import { MessageValidator } from "./MessageValidation";
 
@@ -52,24 +52,52 @@ export class Message extends Struct({
 
 export class AgentState extends Struct({
     lastMessageNumber: Field,
-    securityCode: Characters
+    securityCodeHash: Field,
+    agentID: Field
 }) {
-    constructor(lastMessageNumber: Field, securityCode: Characters) {
+    constructor(lastMessageNumber: Field, securityCodeHash: Field, agentID: Field) {
         super({
             lastMessageNumber,
-            securityCode
+            securityCodeHash,
+            agentID
         });
         this.lastMessageNumber = lastMessageNumber;
-        this.securityCode = securityCode;
+        this.securityCodeHash = securityCodeHash;
+        this.agentID = agentID;
     }
 }
 
+export class AgentStateWithTxInfo extends Struct({
+    lastMessageNumber: Field,
+    securityCodeHash: Field,
+    blockHeight: UInt64,
+    nonce: UInt64,
+    sender: PublicKey
+}){
+    constructor(lastMessageNumber: Field, securityCodeHash: Field, blockHeight: UInt64, nonce: UInt64, sender: PublicKey) {
+        super({lastMessageNumber, securityCodeHash, blockHeight, nonce, sender});
+        this.blockHeight = blockHeight;
+        this.nonce = nonce;
+        this.sender = sender;
+    }
+
+}
 @runtimeModule()
-export class MinaChallenge4 extends RuntimeModule<MinaChallenge4Config> {
+export class MinaChallenge3 extends RuntimeModule<MinaChallenge4Config> {
     @state() public agentStates = StateMap.from<Field, AgentState>(
         Field,
         AgentState
     );
+
+    @runtimeMethod()
+    public populateAgents(): void {
+        const agentID1 = Field(1);
+        const agentID2 = Field(2);
+        const agent1 = new AgentState(Field(0), Poseidon.hash([Character.fromString("1").value, Character.fromString("2").value]), agentID1);
+        const agent2 = new AgentState(Field(0),  Poseidon.hash([Character.fromString("5").value, Character.fromString("6").value]), agentID2);
+        this.agentStates.set(agentID1, agent1);
+        this.agentStates.set(agentID2, agent2);
+    }
 
     @runtimeMethod()
     public IsMessageValid(agentID: Field, messageNumber: Field, securityCode: Characters): boolean {
@@ -77,30 +105,40 @@ export class MinaChallenge4 extends RuntimeModule<MinaChallenge4Config> {
         const agentState = this.agentStates.get(agentID);
         assert(agentState.isSome, "Agent does not exist");
         assert(messageNumber.greaterThan(agentState.value.lastMessageNumber), "Message number is not greater than the last message number");
-        assert(agentState.value.securityCode.array[0].equals(securityCode.array[0]), "Security code does not match");
-        assert(agentState.value.securityCode.array[1].equals(securityCode.array[1]), "Security code does not match");
+        assert(agentState.value.securityCodeHash.equals(Poseidon.hash([securityCode.array[0].value, securityCode.array[1].value])), "Security code does not match");
 
         return true;
     }
 
     @runtimeMethod()
-    public populateAgents(): void {
-        const agentID1 = Field(1);
-        const agentID2 = Field(2);
-        const agent1 = new AgentState(Field(0), new Characters([Character.fromString("1"), Character.fromString("2")]));
-        const agent2 = new AgentState(Field(0),  new Characters([Character.fromString("5"), Character.fromString("6")]));
-        this.agentStates.set(agentID1, agent1);
-        this.agentStates.set(agentID2, agent2);
-    }
+    public submitMessage(proof: MessageValidationProof): void {}
+}
 
+export class AgentKeyAtBlock extends Struct({
+    agentID: Field,
+    blockHeight: UInt64
+}) {
+    constructor(agentID: Field, blockHeight: UInt64) {
+        super({ agentID, blockHeight });
+        this.agentID = agentID;
+        this.blockHeight = blockHeight;
+    }
+}
+
+@runtimeModule()
+export class MinaChallenge4 extends MinaChallenge3 {
+    @state() public agentStatesAtBlocks = StateMap.from<AgentKeyAtBlock, AgentStateWithTxInfo>(
+        AgentKeyAtBlock,
+        AgentStateWithTxInfo
+    );
     @runtimeMethod()
-    public submitMessage(proof: MessageValidationProof): void {
+    public override submitMessage(proof: MessageValidationProof): void {
         proof.verify();
         Provable.log(proof.publicInput.agentID, "Here in the proof public input")
-        Provable.log(proof.publicInput.securityCode, "Here security in proof input")
-       
-        this.IsMessageValid(proof.publicInput.agentID, proof.publicInput.messageNumber, proof.publicInput.securityCode);
-        assert(proof.publicOutput.equals(Field(1)), "Message is not valid");
-        this.agentStates.set(proof.publicInput.agentID, new AgentState(proof.publicInput.messageNumber, proof.publicInput.securityCode));
+        Provable.log(proof.publicInput.agentState.securityCodeHash, "Here security in proof input")
+        this.network.block.height;
+        assert(proof.publicOutput.isValid.equals(Field(1)), "Message is not valid");
+        this.agentStates.set(proof.publicInput.agentID, new AgentState(proof.publicInput.agentState.lastMessageNumber.add(1), proof.publicInput.agentState.securityCodeHash, proof.publicInput.agentID));
+        this.agentStatesAtBlocks.set(new AgentKeyAtBlock(proof.publicInput.agentID, this.network.block.height), new AgentStateWithTxInfo(proof.publicInput.agentState.lastMessageNumber.add(1), proof.publicInput.agentState.securityCodeHash, this.network.block.height, this.transaction.nonce.value, this.transaction.sender.value));
     }
 }

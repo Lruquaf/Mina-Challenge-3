@@ -1,5 +1,6 @@
 import { Bool, Character, Experimental, Field, Poseidon, Provable, Struct } from "o1js";
 import { PackedStringFactory } from "o1js-pack";
+import { assert } from "@proto-kit/protocol";
 
 export class String12 extends PackedStringFactory(12) {}
 export class String2 extends PackedStringFactory(2) {}
@@ -11,25 +12,63 @@ export class Characters extends Struct({
         this.array = array;
     }
 }
+
+export class AgentState extends Struct({
+    lastMessageNumber: Field,
+    securityCodeHash: Field,
+    agentID: Field
+}) {
+    constructor(lastMessageNumber: Field, securityCodeHash: Field, agentID: Field) {
+        super({
+            lastMessageNumber,
+            securityCodeHash,
+            agentID
+        });
+        this.lastMessageNumber = lastMessageNumber;
+        this.securityCodeHash = securityCodeHash;
+        this.agentID = agentID;
+    }
+}
+
 export class MessageValidatorPublicInputs extends Struct({
+    agentID: Field,
+    agentState: AgentState,
+}) {
+    constructor(agentID: Field, agentState: AgentState) {
+        super({ agentID, agentState });
+        this.agentState = agentState;
+    }
+}
+export class MessageValidatorPrivateInputs extends Struct({
     messageNumber: Field,
-    messageHash: Field,
+    messageText: String12,
     agentID: Field,
     securityCode: Characters
 }) {
-    constructor(messageNumber: Field,messageHash: Field, agentID: Field, securityCode: Characters) {
+    constructor(messageNumber: Field, messageText: String12, agentID: Field, securityCode: Characters) {
         super({
             messageNumber,
-            messageHash,
+            messageText,
             agentID,
             securityCode
         });
-        this.messageHash = messageHash;
+        this.messageText = messageText;
         this.agentID = agentID;
         this.messageNumber = messageNumber;
         this.securityCode = securityCode;
     }
 
+}
+
+export class MessageValidatorPublicOutputs extends Struct({
+    securityCodeHash: Field,
+    isValid: Field
+}) {
+    constructor(securityCodeHash: Field, isValid: Field) {
+        super({ securityCodeHash, isValid });
+        this.isValid = isValid;
+        this.securityCodeHash = securityCodeHash;
+    }
 }
 
 function checkMessageLength(message: String12) {
@@ -49,13 +88,15 @@ function checkMessageLength(message: String12) {
 export const MessageValidator = Experimental.ZkProgram({
     name: "MessageValidator",
     publicInput: MessageValidatorPublicInputs,
-    publicOutput: Field,
+    publicOutput: MessageValidatorPublicOutputs,
     methods: {
         checkMessage: {
-            privateInputs: [String12],
-            method(inputs: MessageValidatorPublicInputs, message: String12) {
-                inputs.messageHash.assertEquals(Poseidon.hash([message.packed]));
-                return Provable.if(checkMessageLength(message), Field(1), Field(0));
+            privateInputs: [MessageValidatorPrivateInputs],
+            method(inputs: MessageValidatorPublicInputs, message: MessageValidatorPrivateInputs) {
+                    message.messageNumber.assertGreaterThan(inputs.agentState.lastMessageNumber, "Message number must be greater than the last message number");
+                inputs.agentState.securityCodeHash.assertEquals(Poseidon.hash([message.securityCode.array[0].value, message.securityCode.array[1].value]), "Security code hash must match");
+                inputs.agentState.agentID.assertEquals(message.agentID, "Agent ID must match");
+                return Provable.if(checkMessageLength(message.messageText),MessageValidatorPublicOutputs, new MessageValidatorPublicOutputs(inputs.agentState.securityCodeHash, Field(1)), new MessageValidatorPublicOutputs(inputs.agentState.securityCodeHash, Field(0)));
             },
         },
     },
